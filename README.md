@@ -48,8 +48,8 @@ npm run tauri:build
 
 ## 기능
 
-- ✅ URL 또는 package_idx 입력으로 디시콘 검색
-- ✅ Linux AppImage 지원
+-  URL 또는 package_idx 입력으로 디시콘 검색
+-  Linux AppImage 지원
 
 ## 주의사항
 
@@ -63,9 +63,6 @@ npm run tauri:build
 프로그램을 사용함으로써 발생하는 서비스 이용 제한, 데이터 손실, 저작권 문제 및 기타 손해에 대한 책임은 사용자에게 있습니다.
 
 
-## 라이센스
-
-MIT
 ## 라이센스
 
 MIT
