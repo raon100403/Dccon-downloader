@@ -1,49 +1,44 @@
-use regex::Regex;
+pub fn normalize_package_id(input: &str) -> Result<String, String> {
+    if input.is_empty() || input.len() > 20 || !input.bytes().all(|c| c.is_ascii_digit()) {
+        return Err("유효한 디시콘 번호를 입력하세요.".into());
+    }
+    let id = input.trim_start_matches('0');
+    if id.is_empty() {
+        return Err("유효한 디시콘 번호를 입력하세요.".into());
+    }
+    Ok(id.to_string())
+}
 
-/// Parse dccon URL or package_idx from user input
-/// Supports:
-/// - Direct package_idx: "12345"
-/// - URL with path: "https://dccon.dcinside.com/detail/12345"
-/// - URL with query: "https://dccon.dcinside.com/index/package_detail?no=12345"
 #[tauri::command]
 pub fn parse_dccon_url(input: String) -> Result<String, String> {
     let input = input.trim();
-    
-    // If the input is purely numeric, return it directly
-    if input.chars().all(|c| c.is_ascii_digit()) {
-        return Ok(input.to_string());
+    if let Ok(id) = normalize_package_id(input) {
+        return Ok(id);
     }
-    
-    // Try to extract numbers from URL
-    // Pattern 1: /detail/{number} or /package/{number}
-    let detail_regex = Regex::new(r"/(?:detail|package)/(\d+)")
-        .map_err(|e| format!("Regex error: {}", e))?;
-    
-    if let Some(caps) = detail_regex.captures(input) {
-        if let Some(matched) = caps.get(1) {
-            return Ok(matched.as_str().to_string());
+    let url = reqwest::Url::parse(input).map_err(|_| "디시콘 페이지 주소나 번호를 입력하세요.")?;
+    if !matches!(url.scheme(), "https" | "http") || url.host_str() != Some("dccon.dcinside.com") {
+        return Err("dccon.dcinside.com의 디시콘 페이지 주소를 입력하세요.".into());
+    }
+    if let Some(fragment) = url.fragment() {
+        if let Ok(id) = normalize_package_id(fragment) {
+            return Ok(id);
         }
     }
-    
-    // Pattern 2: ?no={number} or ?package_idx={number} or ?idx={number}
-    let query_regex = Regex::new(r"[?&](?:no|package_idx|idx)=(\d+)")
-        .map_err(|e| format!("Regex error: {}", e))?;
-    
-    if let Some(caps) = query_regex.captures(input) {
-        if let Some(matched) = caps.get(1) {
-            return Ok(matched.as_str().to_string());
+    let segments: Vec<_> = url
+        .path_segments()
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .collect();
+    if segments.len() == 2 && matches!(segments[0], "detail" | "package") {
+        return normalize_package_id(segments[1]);
+    }
+    for (key, value) in url.query_pairs() {
+        if matches!(key.as_ref(), "no" | "package_idx" | "idx") {
+            return normalize_package_id(&value);
         }
     }
-    
-    // Pattern 3: Any consecutive digits in the URL (last resort)
-    let number_regex = Regex::new(r"\d+")
-        .map_err(|e| format!("Regex error: {}", e))?;
-    
-    if let Some(matched) = number_regex.find(input) {
-        return Ok(matched.as_str().to_string());
-    }
-    
-    Err(format!("유효한 디시콘 번호를 찾을 수 없습니다: {}", input))
+    Err("주소에서 디시콘 번호를 찾을 수 없습니다.".into())
 }
 
 #[cfg(test)]
@@ -51,38 +46,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_pure_number() {
-        assert_eq!(parse_dccon_url("12345".to_string()).unwrap(), "12345");
-        assert_eq!(parse_dccon_url("  67890  ".to_string()).unwrap(), "67890");
+    fn accepts_supported_numbers_and_urls() {
+        for input in [
+            "12345",
+            " 0012345 ",
+            "https://dccon.dcinside.com/detail/12345",
+            "https://dccon.dcinside.com/#12345",
+            "https://dccon.dcinside.com/package/12345/",
+            "https://dccon.dcinside.com/index/package_detail?no=12345",
+            "https://dccon.dcinside.com/?package_idx=12345",
+            "https://dccon.dcinside.com/?idx=12345",
+        ] {
+            assert_eq!(parse_dccon_url(input.into()).unwrap(), "12345", "{input}");
+        }
     }
 
     #[test]
-    fn test_parse_detail_url() {
-        let url = "https://dccon.dcinside.com/detail/12345";
-        assert_eq!(parse_dccon_url(url.to_string()).unwrap(), "12345");
-    }
-
-    #[test]
-    fn test_parse_package_url() {
-        let url = "https://dccon.dcinside.com/package/98765";
-        assert_eq!(parse_dccon_url(url.to_string()).unwrap(), "98765");
-    }
-
-    #[test]
-    fn test_parse_query_no() {
-        let url = "https://dccon.dcinside.com/index/package_detail?no=54321";
-        assert_eq!(parse_dccon_url(url.to_string()).unwrap(), "54321");
-    }
-
-    #[test]
-    fn test_parse_query_package_idx() {
-        let url = "https://dccon.dcinside.com/api?package_idx=11111";
-        assert_eq!(parse_dccon_url(url.to_string()).unwrap(), "11111");
-    }
-
-    #[test]
-    fn test_invalid_input() {
-        let result = parse_dccon_url("https://example.com/".to_string());
-        assert!(result.is_err());
+    fn rejects_empty_unrelated_and_partially_numeric_inputs() {
+        for input in [
+            "",
+            " ",
+            "0",
+            "hello123",
+            "https://example.com/detail/12345",
+            "https://dccon.dcinside.com/?version=2",
+            "https://dccon.dcinside.com/detail/123abc",
+            "https://dccon.dcinside.com/?no=12abc",
+            "https://dccon.dcinside.com/detail/１２３",
+            "123456789012345678901",
+        ] {
+            assert!(parse_dccon_url(input.into()).is_err(), "{input}");
+        }
     }
 }
